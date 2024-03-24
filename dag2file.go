@@ -1,63 +1,67 @@
-//package merkledag
-//
-//import (
-//	"fmt"
-//	"io/ioutil"
-//)
-//
-//// Hash to file
+package merkledag
+
+import (
+	"bytes"
+	"encoding/gob"
+	"strings"
+)
+
 //func Hash2File(store KVStore, hash []byte, path string, hp HashPool) []byte {
 //	// 根据hash和path， 返回对应的文件, hash对应的类型是tree
 //	return nil
 //}
 //
 
-package merkledag
-
-import (
-	"bytes"
-	"fmt"
-	"io/ioutil"
-)
-
-// Hash2File 根据哈希值和路径，从 KVStore 中读取相应的文件数据并返回
 func Hash2File(store KVStore, hash []byte, path string, hp HashPool) []byte {
-	// 根据hash和path， 返回对应的文件, hash对应的类型是tree
-	// 获取哈希
-	hasher := hp.Get()
+	rootObjBytes, _ := store.Get(hash)
+	rootObj, _ := deserialize(rootObjBytes)
+	currentNode := rootObj
+	pathComponents := splitPath(path)
 
-	// 将哈希值写入哈希函数
-	_, err := hasher.Write(hash)
+	for _, component := range pathComponents {
+		if currentNode.Data[0] != "tree" {
+			return nil
+		}
+
+		childHash := findChildHash(currentNode, component)
+		if childHash == nil {
+			return nil
+		}
+		childObjBytes, _ := store.Get(childHash)
+		childObj, _ := deserialize(childObjBytes)
+
+		currentNode = childObj
+	}
+
+	if currentNode.Data[0] != "blob" {
+		return nil
+	}
+
+	fileBytes, _ := store.Get([]byte(currentNode.Links[0].Hash))
+	return fileBytes
+}
+
+// 拆分路径
+func splitPath(path string) []string {
+	return strings.Split(path, "/")
+}
+
+// 反序列化object
+func deserialize(data []byte) (*Object, error) {
+	var obj Object
+	err := gob.NewDecoder(bytes.NewReader(data)).Decode(&obj)
 	if err != nil {
-		return nil
+		return nil, err
 	}
+	return &obj, nil
+}
 
-	// 计算哈希值
-	calculatedHash := hasher.Sum(nil)
-
-	// 校验哈希值是否匹配
-	if !bytes.Equal(hash, calculatedHash) {
-		fmt.Printf("hash mismatch")
-		return nil
+// 根据子节点名称查找对应的哈希值
+func findChildHash(node *Object, name string) []byte {
+	for _, link := range node.Links {
+		if link.Name == name {
+			return []byte(link.Hash)
+		}
 	}
-
-	// 从 KVStore 中获取与哈希值相关联的数据
-	data, err := store.Get(hash)
-	if err != nil {
-		return nil
-	}
-
-	// 数据写入文件
-	err = ioutil.WriteFile(path, data, 0644)
-	if err != nil {
-		return nil
-	}
-
-	// 文件中读取内容
-	fileData, err := ioutil.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-
-	return fileData
+	return nil
 }

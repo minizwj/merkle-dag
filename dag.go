@@ -35,6 +35,7 @@ const (
 type Link struct {
 	Hash string // 子节点的哈希值
 	Size int    // 子节点的大小
+	Name string // 子节点的名称
 }
 
 type Object struct {
@@ -61,6 +62,7 @@ func storeBlob(store KVStore, data []byte, h hash.Hash, length int) ([]byte, str
 		{
 			Hash: string(hashValue),
 			Size: length,
+			Name: "blob",
 		},
 	}
 
@@ -98,6 +100,53 @@ func storeBlobList(store KVStore, links []Link, h hash.Hash) ([]byte, string) {
 	return listHash, "list"
 }
 
+// 将目录节点存储到数据库中
+func storeDir(store KVStore, node Node, h hash.Hash) []byte {
+	dir := node.(Dir)
+	childLinks := make([]Link, 0, dir.Size())
+	childData := make([]string, 0, dir.Size())
+
+	iterator := dir.It()
+
+	for iterator.Next() {
+		child := iterator.Node()
+		if child.Type() == FILE {
+			childHash, childType := storeFile(store, child, h)
+			link := Link{
+				Hash: string(childHash),
+				Size: int(child.Size()),
+				Name: childType,
+			}
+			childLinks = append(childLinks, link)
+			childData = append(childData, childType)
+
+		} else if child.Type() == DIR {
+			dirHash := storeDir(store, child, h)
+			nodeType := "tree"
+			if len(childLinks) == 0 {
+				nodeType = "blob"
+			}
+			childLinks = append(childLinks, Link{string(dirHash), int(child.Size()), nodeType})
+			childData = append(childData, nodeType)
+		}
+	}
+
+	obj := &Object{
+		Data:  childData,
+		Links: childLinks,
+	}
+
+	objBytes, err := serialize(obj)
+	if err != nil {
+		return nil
+	}
+
+	dirHash := h.Sum(objBytes)
+
+	store.Put(dirHash, objBytes)
+
+	return dirHash
+}
 func storeFile(store KVStore, node Node, h hash.Hash) ([]byte, string) {
 	file := node.(File)
 	fileContent := file.Bytes()
@@ -119,6 +168,7 @@ func storeFile(store KVStore, node Node, h hash.Hash) ([]byte, string) {
 			link := Link{
 				Hash: string(blobHash),
 				Size: end - start,
+				Name: "blob",
 			}
 			blobLinks[i] = link
 			blobData[i] = "blob"
@@ -146,6 +196,7 @@ func storeFile(store KVStore, node Node, h hash.Hash) ([]byte, string) {
 			link := Link{
 				Hash: string(listHash),
 				Size: len(listLinksChunk),
+				Name: "list",
 			}
 			listLinks[i] = link
 			listData[i] = "list"
@@ -163,53 +214,6 @@ func storeFile(store KVStore, node Node, h hash.Hash) ([]byte, string) {
 		store.Put(listHash, objBytes)
 		return storeBlobList(store, listLinks, h)
 	}
-}
-
-// 将目录节点存储到数据库中
-func storeDir(store KVStore, node Node, h hash.Hash) []byte {
-	dir := node.(Dir)
-	childLinks := make([]Link, 0, dir.Size())
-	childData := make([]string, 0, dir.Size())
-
-	iterator := dir.It()
-
-	for iterator.Next() {
-		child := iterator.Node()
-		if child.Type() == FILE {
-			childHash, childType := storeFile(store, child, h)
-			link := Link{
-				Hash: string(childHash),
-				Size: int(child.Size()),
-			}
-			childLinks = append(childLinks, link)
-			childData = append(childData, childType)
-
-		} else if child.Type() == DIR {
-			dirHash := storeDir(store, child, h)
-			nodeType := "tree"
-			if len(childLinks) == 0 {
-				nodeType = "blob"
-			}
-			childLinks = append(childLinks, Link{string(dirHash), int(child.Size())})
-			childData = append(childData, nodeType)
-		}
-	}
-
-	obj := &Object{
-		Data:  childData,
-		Links: childLinks,
-	}
-
-	objBytes, err := serialize(obj)
-	if err != nil {
-		return nil
-	}
-
-	dirHash := h.Sum(objBytes)
-
-	store.Put(dirHash, objBytes)
-
-	return dirHash
 }
 
 // Add函数用于生成MerkleDAG
