@@ -1,23 +1,3 @@
-//package merkledag
-//
-//import "hash"
-//
-//type Link struct {
-//	Name string
-//	Hash []byte
-//	Size int
-//}
-//
-//type Object struct {
-//	Links []Link
-//	Data  []byte
-//}
-//
-//func Add(store KVStore, node Node, h hash.Hash) []byte {
-//	// TODO 将分片写入到KVStore中，并返回Merkle Root
-//	return nil
-//}
-
 package merkledag
 
 import (
@@ -57,18 +37,9 @@ func storeBlob(store KVStore, data []byte, h hash.Hash, length int) ([]byte, str
 	h.Reset()
 	h.Write(data)
 	hashValue := h.Sum(nil)
-
-	links := []Link{
-		{
-			Hash: string(hashValue),
-			Size: length,
-			Name: "blob",
-		},
-	}
-
 	obj := &Object{
-		Data:  []string{"blob"},
-		Links: links,
+		Data: []string{"blob"},
+		//Links: links,
 	}
 
 	objBytes, _ := serialize(obj)
@@ -89,7 +60,6 @@ func storeBlobList(store KVStore, links []Link, h hash.Hash) ([]byte, string) {
 		Data:  data,
 		Links: links,
 	}
-
 	objBytes, _ := serialize(obj)
 
 	h.Reset() // 重置哈希状态
@@ -115,7 +85,7 @@ func storeDir(store KVStore, node Node, h hash.Hash) []byte {
 			link := Link{
 				Hash: string(childHash),
 				Size: int(child.Size()),
-				Name: childType,
+				Name: child.Name(),
 			}
 			childLinks = append(childLinks, link)
 			childData = append(childData, childType)
@@ -126,7 +96,7 @@ func storeDir(store KVStore, node Node, h hash.Hash) []byte {
 			if len(childLinks) == 0 {
 				nodeType = "blob"
 			}
-			childLinks = append(childLinks, Link{string(dirHash), int(child.Size()), nodeType})
+			childLinks = append(childLinks, Link{string(dirHash), int(child.Size()), child.Name()})
 			childData = append(childData, nodeType)
 		}
 	}
@@ -140,9 +110,9 @@ func storeDir(store KVStore, node Node, h hash.Hash) []byte {
 	if err != nil {
 		return nil
 	}
-
-	dirHash := h.Sum(objBytes)
-
+	h.Reset()
+	h.Write(objBytes)
+	dirHash := h.Sum(nil)
 	store.Put(dirHash, objBytes)
 
 	return dirHash
@@ -153,9 +123,25 @@ func storeFile(store KVStore, node Node, h hash.Hash) ([]byte, string) {
 
 	// 计算需要分割成的块数
 	numBlobs := int(math.Ceil(float64(len(fileContent)) / float64(Blob)))
+	if numBlobs == 1 {
+		blobData := make([]string, numBlobs)
+		blobData[0] = "blob"
+		h.Reset()
+		h.Write(file.Bytes()) //对文件内容进行hash
+		hashValue := h.Sum(nil)
+
+		obj := &Object{
+			Data: []string{"blob"},
+		}
+		objBytes, _ := serialize(obj)
+		err := store.Put(hashValue, objBytes) // 存储序列化后的数据
+		if err != nil {
+			return nil, ""
+		}
+		return hashValue, "blob"
+	}
 	blobLinks := make([]Link, numBlobs)
 	blobData := make([]string, numBlobs)
-
 	if numBlobs > 1 && numBlobs <= MaxBlobList {
 		// 当块数大于1且小于等于MaxBlobList时，将块存储到列表中
 		for i := 0; i < numBlobs; i++ {
@@ -168,7 +154,7 @@ func storeFile(store KVStore, node Node, h hash.Hash) ([]byte, string) {
 			link := Link{
 				Hash: string(blobHash),
 				Size: end - start,
-				Name: "blob",
+				//Name: node.Name(),
 			}
 			blobLinks[i] = link
 			blobData[i] = "blob"
@@ -196,7 +182,7 @@ func storeFile(store KVStore, node Node, h hash.Hash) ([]byte, string) {
 			link := Link{
 				Hash: string(listHash),
 				Size: len(listLinksChunk),
-				Name: "list",
+				//Name: node.Name(),
 			}
 			listLinks[i] = link
 			listData[i] = "list"
